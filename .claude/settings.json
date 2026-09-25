@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      { "hooks": [{ "type": "command", "command": "python hooks/all_hooks.py" }] }
+    ],
+    "PostToolUse": [
+      { "hooks": [{ "type": "command", "command": "python hooks/all_hooks.py" }] }
+    ],
+    "Notification": [
+      { "hooks": [{ "type": "command", "command": "python hooks/all_hooks.py" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "python hooks/all_hooks.py" }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "python hooks/all_hooks.py" }] }
+    ]
+  }
+}

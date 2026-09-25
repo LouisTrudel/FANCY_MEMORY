@@ -1,0 +1,15 @@
+# Project-specific data (don't track in template)
+memory/**/*.md
+whitepaper.md
+roadmap.md
+
+# Logs
+*.log
+hooks/*.log
+
+# Python
+__pycache__/
+*.pyc
+
+# Local settings
+.claude/settings.local.json
