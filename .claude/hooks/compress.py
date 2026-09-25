@@ -285,15 +285,17 @@ def compress_with_claude(content: str, prompt: str) -> str | None:
     """Call Claude CLI to compress content. Uses Sonnet for nuanced compression."""
     try:
         # Use stdin for prompt to avoid shell escaping issues
-        # --no-hooks prevents compression prompts/responses from being logged back to memory
+        # Run from temp dir so Claude CLI doesn't find project's settings.json/hooks
+        import tempfile
         result = subprocess.run(
-            ["claude", "--model", "sonnet", "-p", "-", "--no-hooks"],
+            ["claude", "--model", "sonnet", "-p", "-"],
             input=prompt,
             capture_output=True,
             text=True,
             timeout=180,
             encoding="utf-8",
-            shell=True
+            shell=True,
+            cwd=tempfile.gettempdir()
         )
 
         if result.returncode != 0:
