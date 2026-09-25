@@ -29,15 +29,16 @@ New session → inject_memory() → Context restored
 ## Structure
 
 ```
-├── .claude/settings.json   # Hooks + MCP config
+├── .claude/
+│   ├── settings.json       # Hooks config
+│   ├── mcp_server.py       # inject_memory() tool
+│   ├── hooks/              # Auto-log, compress, extract
+│   └── memory/             # Accumulates as you work
+│       ├── episodic/
+│       ├── narrative/
+│       └── semantic/
 ├── .mcp.json               # MCP server reference
-├── CLAUDE.md               # Behavior guidance
-├── mcp_server.py           # inject_memory() tool
-├── hooks/                  # Auto-log, compress, extract
-└── memory/                 # Accumulates as you work
-    ├── episodic/
-    ├── narrative/
-    └── semantic/
+└── CLAUDE.md               # Behavior guidance
 ```
 
 ## What Gets Tracked

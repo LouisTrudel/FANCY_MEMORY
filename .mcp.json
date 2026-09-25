@@ -3,7 +3,7 @@
     "workspace": {
       "type": "stdio",
       "command": "python",
-      "args": ["mcp_server.py"]
+      "args": [".claude/mcp_server.py"]
     }
   }
 }

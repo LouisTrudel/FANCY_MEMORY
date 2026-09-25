@@ -10,7 +10,7 @@ from pathlib import Path
 
 mcp = MCPServer("workspace")
 
-MEMORY_DIR = Path("memory")
+MEMORY_DIR = Path(".claude/memory")
 
 
 @mcp.tool()

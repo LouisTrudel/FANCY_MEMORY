@@ -1,11 +1,11 @@
 # Project-specific data (don't track in template)
-memory/**/*.md
+.claude/memory/**/*.md
 whitepaper.md
 roadmap.md
 
 # Logs
 *.log
-hooks/*.log
+.claude/hooks/*.log
 
 # Python
 __pycache__/
