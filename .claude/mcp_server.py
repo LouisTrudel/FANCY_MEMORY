@@ -18,24 +18,19 @@ def inject_memory() -> str:
     """
     Load memory context from previous sessions. Call this at session start.
 
-    Returns episodic history (what happened) + narrative context (the story).
+    Returns episodic history + semantic knowledge (preferences, antipatterns, skills).
+    Skills are referenced in skillTree - read them on-demand when relevant.
     """
     EPISODIC_DIR = MEMORY_DIR / "episodic"
-    NARRATIVE_DIR = MEMORY_DIR / "narrative"
     SEMANTIC_DIR = MEMORY_DIR / "semantic"
-    SKILLS_DIR = SEMANTIC_DIR / "skills"
 
     LIMITS = {
         # Episodic - cascade until budget
         "episodic_budget": 10_000,
-        # Narrative - just chapter for continuity
-        "chapter_tail": 5_000,
-        # Semantic - core files + skill tree
+        # Semantic - core files + skill tree (skills are on-demand)
         "preferences": 3_000,
         "antipatterns": 2_000,
         "skill_tree": 2_000,
-        "skill_file": 2_000,
-        "max_skills": 3,  # Max skill files to inject
     }
 
     def read_file(path, max_chars=None):
@@ -45,14 +40,6 @@ def inject_memory() -> str:
         if max_chars and len(content) > max_chars:
             return content[:max_chars] + "\n\n[...truncated...]"
         return content
-
-    def read_tail(path, max_chars):
-        if not path.exists():
-            return ""
-        content = path.read_text(encoding="utf-8").strip()
-        if len(content) <= max_chars:
-            return content
-        return "[...earlier content...]\n\n" + content[-max_chars:]
 
     def cascade_episodic(budget):
         """Read episodic tiers until budget reached, newest first."""
@@ -86,12 +73,7 @@ def inject_memory() -> str:
     if episodic:
         sections.append(f"## Recent Events\n{episodic}")
 
-    # === NARRATIVE (chapter tail only - draft is verbose) ===
-    chapter = read_tail(NARRATIVE_DIR / "chapter.md", LIMITS["chapter_tail"])
-    if chapter:
-        sections.append(f"## Story So Far\n{chapter}")
-
-    # === SEMANTIC (core + skills) ===
+    # === SEMANTIC ===
 
     # Core preferences (always inject)
     prefs = read_file(SEMANTIC_DIR / "preferences.md", LIMITS["preferences"])
@@ -103,23 +85,10 @@ def inject_memory() -> str:
     if anti:
         sections.append(f"## Antipatterns\n{anti}")
 
-    # Skill tree (shows available skills)
+    # Skill tree (index only - read skill files on-demand when relevant)
     skill_tree = read_file(SEMANTIC_DIR / "skillTree.md", LIMITS["skill_tree"])
     if skill_tree:
-        sections.append(f"## Skill Tree\n{skill_tree}")
-
-    # Inject most recently modified skills (recency = relevance)
-    if SKILLS_DIR.exists():
-        skill_files = sorted(
-            SKILLS_DIR.glob("*.md"),
-            key=lambda f: f.stat().st_mtime,
-            reverse=True
-        )
-        for skill_file in skill_files[:LIMITS["max_skills"]]:
-            skill_content = read_file(skill_file, LIMITS["skill_file"])
-            if skill_content:
-                skill_name = skill_file.stem.replace("-", " ").title()
-                sections.append(f"## Skill: {skill_name}\n{skill_content}")
+        sections.append(f"## Skill Tree\n{skill_tree}\n\n*Skills listed above can be read from `{SEMANTIC_DIR}/skills/<name>.md` when relevant.*")
 
     if not sections:
         return "No memory context yet. Start working and it will accumulate."
