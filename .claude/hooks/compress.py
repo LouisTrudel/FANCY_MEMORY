@@ -82,8 +82,7 @@ def file_size(path: Path) -> int:
 
 # ============ RATE LIMITING ============
 
-COOLDOWN_SECONDS = 60
-MAX_PER_HOUR = 10
+COOLDOWN_SECONDS = 30  # Just prevent hammering, no hourly cap
 
 
 def load_state() -> dict:
@@ -92,7 +91,7 @@ def load_state() -> dict:
             return json.loads(STATE_FILE.read_text(encoding="utf-8"))
         except:
             pass
-    return {"last_compression": None, "hour_start": None, "count_this_hour": 0}
+    return {"last_compression": None}
 
 
 def save_state(state: dict):
@@ -109,34 +108,13 @@ def can_compress() -> tuple[bool, str]:
         remaining = int(COOLDOWN_SECONDS - (now - last))
         return False, f"cooldown ({remaining}s)"
 
-    hour_start = state.get("hour_start")
-    count = state.get("count_this_hour", 0)
-
-    if hour_start and (now - hour_start) < 3600:
-        if count >= MAX_PER_HOUR:
-            return False, f"hourly limit ({MAX_PER_HOUR}/hour)"
-    else:
-        state["hour_start"] = now
-        state["count_this_hour"] = 0
-        save_state(state)
-
     return True, "ok"
 
 
 def record_compression():
     state = load_state()
-    now = datetime.now().timestamp()
-
-    state["last_compression"] = now
-    state["count_this_hour"] = state.get("count_this_hour", 0) + 1
-
-    hour_start = state.get("hour_start")
-    if not hour_start or (now - hour_start) >= 3600:
-        state["hour_start"] = now
-        state["count_this_hour"] = 1
-
+    state["last_compression"] = datetime.now().timestamp()
     save_state(state)
-    log(f"Compression #{state['count_this_hour']} this hour")
 
 
 # ============ LOCK ============
@@ -355,23 +333,16 @@ def compress_episodic_tier(n: int) -> bool:
     path.write_text("", encoding="utf-8")
     log(f"Cleared episodic/tier{n}, appended to tier{n+1}")
 
-    # Trigger semantic extraction after tier0→tier1 compression
-    if n == 0:
-        trigger_semantic("prefs")
-
     return True
 
 
-def trigger_semantic(extraction_type: str):
-    """Run semantic extraction inline (fast with haiku)."""
+def trigger_semantic():
+    """Run semantic extraction (preferences + antipatterns from narrative)."""
     try:
         import sys
         sys.path.insert(0, str(Path(__file__).parent))
-        from semantic import on_tier1_compress, on_chapter_compress
-        if extraction_type == "prefs":
-            on_tier1_compress()
-        elif extraction_type == "project":
-            on_chapter_compress()
+        from semantic import on_draft_compress
+        on_draft_compress()
     except Exception as e:
         log(f"Semantic extraction failed: {e}")
 
@@ -418,7 +389,7 @@ def compress_narrative_level(level: str) -> bool:
 
     # Trigger semantic extraction after draft→chapter compression
     if level == "draft":
-        trigger_semantic("project")
+        trigger_semantic()
 
     return True
 
