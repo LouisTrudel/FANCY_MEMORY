@@ -395,37 +395,57 @@ def compress_narrative_level(level: str) -> bool:
 
 
 def cascade_compress():
-    """Check all tiers/levels and compress as needed."""
+    """Check all tiers/levels and compress as needed.
+
+    Priority: higher levels first (they're backlogged).
+    - Episodic: tier2, tier1, tier0 (not tier0 first!)
+    - Narrative: book, chapter, draft (not draft first!)
+    """
     compressed_count = 0
 
-    # Episodic: check tier0, tier1, ... until one doesn't exist
-    for n in range(100):  # safety limit
-        path = episodic_path(n)
-        if n > 0 and not path.exists():
+    # Collect all files needing compression with their priority
+    candidates = []
+
+    # Episodic: find highest existing tier, work down
+    max_tier = 0
+    for n in range(100):
+        if not episodic_path(n).exists():
             break
+        max_tier = n
 
-        if file_size(path) > episodic_threshold(n):
-            allowed, reason = can_compress()
-            if not allowed:
-                log(f"Rate limited: {reason}")
-                return compressed_count
+    for n in range(max_tier, -1, -1):  # highest to lowest
+        path = episodic_path(n)
+        size = file_size(path)
+        threshold = episodic_threshold(n)
+        if size > threshold:
+            candidates.append(("episodic", n, size, threshold))
 
-            if compress_episodic_tier(n):
-                record_compression()
-                compressed_count += 1
-
-    # Narrative: check draft, chapter, book (not collection)
-    for level in NARRATIVE_LEVELS[:-1]:  # exclude collection
+    # Narrative: book, chapter, draft (reverse order)
+    for level in reversed(NARRATIVE_LEVELS[:-1]):  # book, chapter, draft
         path = narrative_path(level)
         if not path.exists():
             continue
+        size = file_size(path)
+        threshold = NARRATIVE_THRESHOLDS[level]
+        if size > threshold:
+            candidates.append(("narrative", level, size, threshold))
 
-        if file_size(path) > NARRATIVE_THRESHOLDS[level]:
-            allowed, reason = can_compress()
-            if not allowed:
-                log(f"Rate limited: {reason}")
-                return compressed_count
+    # Process candidates in order (already prioritized)
+    for item in candidates:
+        allowed, reason = can_compress()
+        if not allowed:
+            log(f"Rate limited: {reason}")
+            return compressed_count
 
+        if item[0] == "episodic":
+            tier = item[1]
+            log(f"Priority compress: episodic/tier{tier} ({item[2]} > {item[3]})")
+            if compress_episodic_tier(tier):
+                record_compression()
+                compressed_count += 1
+        else:
+            level = item[1]
+            log(f"Priority compress: narrative/{level} ({item[2]} > {item[3]})")
             if compress_narrative_level(level):
                 record_compression()
                 compressed_count += 1
