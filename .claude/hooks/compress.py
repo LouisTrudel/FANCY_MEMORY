@@ -395,60 +395,34 @@ def compress_narrative_level(level: str) -> bool:
 
 
 def cascade_compress():
-    """Check all tiers/levels and compress as needed.
+    """Compress ALL files over threshold in one run.
 
-    Priority: higher levels first (they're backlogged).
-    - Episodic: tier2, tier1, tier0 (not tier0 first!)
-    - Narrative: book, chapter, draft (not draft first!)
+    Rate limiting happens in main() before this is called.
+    No per-file rate limiting - compress everything that needs it.
     """
     compressed_count = 0
 
-    # Collect all files needing compression with their priority
-    candidates = []
-
-    # Episodic: find highest existing tier, work down
-    max_tier = 0
+    # Episodic: check all existing tiers
     for n in range(100):
-        if not episodic_path(n).exists():
-            break
-        max_tier = n
-
-    for n in range(max_tier, -1, -1):  # highest to lowest
         path = episodic_path(n)
-        size = file_size(path)
-        threshold = episodic_threshold(n)
-        if size > threshold:
-            candidates.append(("episodic", n, size, threshold))
+        if not path.exists():
+            break
+        if file_size(path) > episodic_threshold(n):
+            if compress_episodic_tier(n):
+                compressed_count += 1
 
-    # Narrative: book, chapter, draft (reverse order)
-    for level in reversed(NARRATIVE_LEVELS[:-1]):  # book, chapter, draft
+    # Narrative: check draft, chapter, book
+    for level in NARRATIVE_LEVELS[:-1]:  # exclude collection
         path = narrative_path(level)
         if not path.exists():
             continue
-        size = file_size(path)
-        threshold = NARRATIVE_THRESHOLDS[level]
-        if size > threshold:
-            candidates.append(("narrative", level, size, threshold))
-
-    # Process candidates in order (already prioritized)
-    for item in candidates:
-        allowed, reason = can_compress()
-        if not allowed:
-            log(f"Rate limited: {reason}")
-            return compressed_count
-
-        if item[0] == "episodic":
-            tier = item[1]
-            log(f"Priority compress: episodic/tier{tier} ({item[2]} > {item[3]})")
-            if compress_episodic_tier(tier):
-                record_compression()
-                compressed_count += 1
-        else:
-            level = item[1]
-            log(f"Priority compress: narrative/{level} ({item[2]} > {item[3]})")
+        if file_size(path) > NARRATIVE_THRESHOLDS[level]:
             if compress_narrative_level(level):
-                record_compression()
                 compressed_count += 1
+
+    # Record once for the whole batch
+    if compressed_count > 0:
+        record_compression()
 
     return compressed_count
 
