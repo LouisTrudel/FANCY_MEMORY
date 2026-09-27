@@ -3,15 +3,18 @@ Background compression - handles both Episodic and Narrative memory systems.
 
 EPISODIC (tier0 → tier1 → tier2 → ... → tierN):
   - Infinite tiers with formula-based thresholds
-  - tier0: 50KB, tierN (N>=1): 10KB + (N × 5KB)
+  - tier0: 20KB, tier1: 15KB, tierN (N>=2): 15KB + (N × 5KB)
   - Bullet-point format, timestamped events
 
 NARRATIVE (draft → chapter → book → collection):
-  - Fixed 4-level hierarchy
+  - Fixed 4-level hierarchy (draft: 25KB, chapter: 20KB, book: 50KB)
   - Prose format, includes reasoning/thinking
   - Tells the story of what happened and why
 
-Rate limiting: 60s cooldown, 10/hour max
+Protection:
+  - Lock file prevents concurrent runs
+  - 30s cooldown between batches
+  - All over-threshold files compress in one batch
 """
 
 import subprocess
