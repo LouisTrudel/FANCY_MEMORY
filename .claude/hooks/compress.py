@@ -386,13 +386,13 @@ def compress_narrative_level(level: str) -> bool:
     existing = next_path.read_text(encoding="utf-8") if next_path.exists() else ""
     next_path.write_text(existing + entry, encoding="utf-8")
 
+    # Trigger semantic extraction BEFORE clearing draft (needs the content)
+    if level == "draft":
+        trigger_semantic()
+
     # Clear current level
     path.write_text("", encoding="utf-8")
     log(f"Cleared narrative/{level}, appended to {next_level}")
-
-    # Trigger semantic extraction after draft→chapter compression
-    if level == "draft":
-        trigger_semantic()
 
     return True
 
