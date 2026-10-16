@@ -1,15 +1,45 @@
-# Project-specific data (don't track in template)
+# ---------------------------------------------------------------------------
+# This repo is a TEMPLATE. It tracks the memory system itself and nothing the
+# memory system produces, so a clone starts empty and `git status` stays quiet
+# while you actually use it.
+#
+# Tracked:   hooks/, mcp_server.py, settings.json, .mcp.json, CLAUDE.md, README
+# Ignored:   everything below, all of it generated per install
+# ---------------------------------------------------------------------------
+
+# Generated memory data. Covers the episodic tiers (tier0, tier1, tier2, ...),
+# the whole narrative track (draft, chapter, book, collection), the semantic
+# files (preferences, antipatterns, skillTree, prefs, project) and every
+# auto-generated skill under semantic/skills/. Also catches the .pending.md
+# sidecars that compression parks while a summary is being validated.
 .claude/memory/**/*.md
+
+# Compression runtime state (not .md, so the rule above misses them)
+.claude/memory/.compress.lock
+.claude/memory/.compress_state.json
+
+# Logs: hook debug capture (events.log), compression, semantic extraction
+*.log
+
+# Per-project docs - written per install, not shipped with the template
 whitepaper.md
 roadmap.md
 
-# Logs
-*.log
-.claude/hooks/*.log
+# Local settings and backup/scratch files
+.claude/settings.local.json
+*.bak
+*.bak.*
+
+# Windows artifact from a stray `> nul` redirect
+nul
 
 # Python
 __pycache__/
 *.pyc
 
-# Local settings
-.claude/settings.local.json
+# Salvaged reference material, kept locally and never shipped to a clone
+.reference/
+
+# This project's own working docs - a clone starts its own, it doesn't inherit these
+PLAN_memory_improvements.md
+requirements.txt
