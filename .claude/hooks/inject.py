@@ -27,6 +27,12 @@ LIMITS = {
     "semantic": 3_000,        # Core facts
 }
 
+# Auto-generated skill material is kept OUT of injection. These stems live in
+# memory/semantic/; the skills/ subfolder is excluded wholesale by
+# INJECT_SKILLS below. See get_semantic_context() for why.
+SEMANTIC_EXCLUDE = {"skillTree"}
+INJECT_SKILLS = False
+
 
 def read_file(path: Path, max_chars: int = None) -> str:
     """Read file, optionally truncated."""
@@ -77,8 +83,8 @@ def get_narrative_context() -> str:
     if draft:
         sections.append(f"### Current Session Notes\n{draft}")
 
-    # chapter full (story so far)
-    chapter = read_file(NARRATIVE_DIR / "chapter.md", LIMITS["chapter_full"])
+    # chapter tail (story so far; newest sections win once over budget)
+    chapter = read_tail(NARRATIVE_DIR / "chapter.md", LIMITS["chapter_full"])
     if chapter:
         sections.append(f"### Story So Far\n{chapter}")
 
@@ -89,25 +95,37 @@ def get_narrative_context() -> str:
 
 
 def get_semantic_context() -> str:
-    """Get semantic memory (facts, skills) for injection."""
+    """Get semantic memory (stable facts) for injection.
+
+    Auto-generated skill material is deliberately NOT injected. The per-file
+    caps here were never an aggregate budget, and the file count is unbounded:
+    skills went 20 -> 36 in a single week, each one adding up to 1KB to EVERY
+    session start, which had pushed injection to ~81KB (~20K tokens). The files
+    are also unrefined enough that injecting them was a net negative.
+
+    They stay on disk, readable on demand and via search_memory(). Nothing else
+    references them - CLAUDE.md never did. Flip INJECT_SKILLS to re-enable, or
+    drop a stem from SEMANTIC_EXCLUDE to bring that file back.
+    """
     sections = []
 
-    # Check for any .md files in semantic dir
     if SEMANTIC_DIR.exists():
-        for md_file in SEMANTIC_DIR.glob("*.md"):
+        for md_file in sorted(SEMANTIC_DIR.glob("*.md")):
+            if md_file.stem in SEMANTIC_EXCLUDE:
+                continue
             content = read_file(md_file, LIMITS["semantic"])
             if content:
                 name = md_file.stem.replace("_", " ").title()
                 sections.append(f"### {name}\n{content}")
 
-        # Also check skills subfolder
-        skills_dir = SEMANTIC_DIR / "skills"
-        if skills_dir.exists():
-            for md_file in skills_dir.glob("*.md"):
-                content = read_file(md_file, 1000)  # Smaller limit for skills
-                if content:
-                    name = md_file.stem.replace("_", " ").title()
-                    sections.append(f"### Skill: {name}\n{content}")
+        if INJECT_SKILLS:
+            skills_dir = SEMANTIC_DIR / "skills"
+            if skills_dir.exists():
+                for md_file in sorted(skills_dir.glob("*.md")):
+                    content = read_file(md_file, 1000)
+                    if content:
+                        name = md_file.stem.replace("_", " ").title()
+                        sections.append(f"### Skill: {name}\n{content}")
 
     if not sections:
         return ""
