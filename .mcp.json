@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "workspace": {
+    "fancy_memory": {
       "type": "stdio",
       "command": "python",
       "args": [".claude/mcp_server.py"]

@@ -12,7 +12,7 @@ import re
 from mcp.server.mcpserver import MCPServer
 from pathlib import Path
 
-mcp = MCPServer("workspace")
+mcp = MCPServer("fancy_memory")
 
 MEMORY_DIR = Path(".claude/memory")
 
