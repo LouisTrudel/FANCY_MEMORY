@@ -1,13 +1,15 @@
 """
-Hook handler - logs conversation to memory system
+Hook handler - logs conversation to the memory system.
 
-Episodic: memory/episodic/tier0.md (User + Claude responses)
-Narrative: memory/narrative/draft.md (User + Claude responses + thinking)
+Episodic: memory/episodic/tier0.md (user prompts + assistant replies)
+Narrative: memory/narrative/draft.md (user prompts + assistant replies)
 
+Only the assistant's visible text is recorded.
 Auto-compression spawned when thresholds exceeded.
 """
 
 import sys
+import os
 import json
 import subprocess
 from pathlib import Path
@@ -42,47 +44,91 @@ def log_episodic(role: str, content: str):
         f.write(entry)
 
 
-def log_narrative(role: str, content: str, thinking: str = None):
-    """Append to narrative/draft.md (with thinking)."""
+def log_narrative(role: str, content: str):
+    """Append to narrative/draft.md."""
     ensure_dirs()
     draft = NARRATIVE_DIR / "draft.md"
     timestamp = datetime.now().strftime("%H:%M:%S")
-
-    entry = f"\n**[{timestamp}] {role}:**\n"
-    if thinking:
-        entry += f"<thinking>\n{thinking}\n</thinking>\n\n"
-    entry += f"{content}\n"
+    entry = f"\n**[{timestamp}] {role}:**\n{content}\n"
 
     with open(draft, "a", encoding="utf-8") as f:
         f.write(entry)
 
 
-def log_debug(event: str, data: dict):
-    """Append raw event to debug log."""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    payload_str = json.dumps(data, indent=2, default=str)
-    entry = f"\n{'='*60}\n[{timestamp}] {event}\n{'='*60}\n{payload_str}\n"
+# Debug capture only. NOTHING in the memory system reads events.log -
+# inject_memory() and compression never open it. It exists purely so a human
+# can inspect what the hooks received.
+#
+# It had reached 95MB in 27 hours, and 98% of that was PreToolUse/PostToolUse
+# carrying entire tool payloads (~9KB each, pretty-printed over ~31 lines) that
+# feed neither episodic nor narrative memory. Only Stop and UserPromptSubmit
+# drive the memory system, so only those are kept, one compact line each.
+DEBUG_EVENTS = {"Stop", "UserPromptSubmit"}
+DEBUG_MAX_BYTES = 10_000_000      # rotate past this; set to 0 to log nothing
+DEBUG_MAX_PAYLOAD = 4_000         # truncate any single payload past this
 
-    with open(DEBUG_LOG, "a", encoding="utf-8") as f:
-        f.write(entry)
+
+def log_debug(event: str, data: dict):
+    """Append one compact line per kept event, with rotation."""
+    if not DEBUG_MAX_BYTES or event not in DEBUG_EVENTS:
+        return
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    payload_str = json.dumps(data, default=str)
+    if len(payload_str) > DEBUG_MAX_PAYLOAD:
+        payload_str = (payload_str[:DEBUG_MAX_PAYLOAD]
+                       + f"... [truncated from {len(payload_str)} bytes]")
+    entry = f"[{timestamp}] {event} {payload_str}\n"
+
+    try:
+        if DEBUG_LOG.exists() and DEBUG_LOG.stat().st_size + len(entry) > DEBUG_MAX_BYTES:
+            DEBUG_LOG.replace(DEBUG_LOG.with_suffix(".1.log"))
+        with open(DEBUG_LOG, "a", encoding="utf-8") as f:
+            f.write(entry)
+    except Exception:
+        pass    # debug logging must never break a hook
+
+
+def over_threshold() -> list:
+    """Every tier/level currently above its own threshold.
+
+    Checking only tier0 and draft meant a backlog anywhere else (tier1+,
+    chapter, book) never triggered a run of its own - it was picked up only
+    when tier0 or draft happened to trip at the same time. compress.py owns
+    the threshold table, so import it instead of keeping a second copy here.
+    """
+    sys.path.insert(0, str(Path(__file__).parent))
+    try:
+        from compress import (
+            episodic_path, episodic_threshold,
+            narrative_path, NARRATIVE_LEVELS, NARRATIVE_THRESHOLDS,
+        )
+    except Exception as e:
+        print(f"[HOOK] threshold check unavailable: {e}", file=sys.stderr)
+        return []
+
+    over = []
+    for n in range(100):  # safety limit
+        p = episodic_path(n)
+        if n > 0 and not p.exists():
+            break
+        if p.exists() and p.stat().st_size > episodic_threshold(n):
+            over.append("episodic/tier%d" % n)
+
+    for level in NARRATIVE_LEVELS[:-1]:  # collection never compresses
+        p = narrative_path(level)
+        if p.exists() and p.stat().st_size > NARRATIVE_THRESHOLDS[level]:
+            over.append("narrative/" + level)
+
+    return over
 
 
 def maybe_compress():
-    """Spawn compression if any threshold exceeded."""
-    episodic_tier0 = EPISODIC_DIR / "tier0.md"
-    narrative_draft = NARRATIVE_DIR / "draft.md"
+    """Spawn compression if any tier or narrative level exceeds its threshold."""
+    over = over_threshold()
 
-    needs_compression = False
-
-    if episodic_tier0.exists() and episodic_tier0.stat().st_size > EPISODIC_TIER0_THRESHOLD:
-        needs_compression = True
-        print(f"[HOOK] episodic/tier0 exceeds threshold", file=sys.stderr)
-
-    if narrative_draft.exists() and narrative_draft.stat().st_size > NARRATIVE_DRAFT_THRESHOLD:
-        needs_compression = True
-        print(f"[HOOK] narrative/draft exceeds threshold", file=sys.stderr)
-
-    if needs_compression:
+    if over:
+        print("[HOOK] over threshold: " + ", ".join(over), file=sys.stderr)
         subprocess.Popen(
             ["python", str(COMPRESS_SCRIPT)],
             stdout=subprocess.DEVNULL,
@@ -93,8 +139,8 @@ def maybe_compress():
 
 
 def extract_last_assistant(transcript_path: str) -> dict:
-    """Extract last assistant message from transcript JSONL."""
-    result = {"thinking": None, "text": None}
+    """Return the last assistant message's visible text from the transcript JSONL."""
+    result = {"text": None}
 
     try:
         with open(transcript_path, "r", encoding="utf-8") as f:
@@ -103,27 +149,19 @@ def extract_last_assistant(transcript_path: str) -> dict:
         for line in reversed(lines):
             try:
                 obj = json.loads(line)
-                if obj.get("type") != "assistant":
-                    continue
-
-                msg = obj.get("message", {})
-                content = msg.get("content", [])
-
-                for item in content:
-                    if not isinstance(item, dict):
-                        continue
-
-                    if item.get("type") == "thinking" and not result["thinking"]:
-                        result["thinking"] = item.get("thinking", "")
-
-                    if item.get("type") == "text" and not result["text"]:
-                        result["text"] = item.get("text", "")
-
-                if result["thinking"] and result["text"]:
-                    break
-
             except json.JSONDecodeError:
                 continue
+
+            if obj.get("type") != "assistant":
+                continue
+
+            for item in obj.get("message", {}).get("content", []):
+                if isinstance(item, dict) and item.get("type") == "text":
+                    result["text"] = item.get("text", "")
+                    break
+
+            if result["text"]:
+                break
 
     except Exception as e:
         print(f"[HOOK] Error reading transcript: {e}", file=sys.stderr)
@@ -156,8 +194,8 @@ def main():
                     # Episodic: just the response
                     log_episodic("Claude", assistant["text"])
 
-                    # Narrative: response + thinking
-                    log_narrative("Claude", assistant["text"], assistant["thinking"])
+                    # Narrative: the visible reply
+                    log_narrative('Claude', assistant['text'])
 
             maybe_compress()
 
@@ -165,5 +203,18 @@ def main():
         print(f"[HOOK ERROR] {e}", file=sys.stderr)
 
 
+# Set by compress.py and semantic.py on the `claude -p` subprocesses they
+# spawn. Those subprocesses run inside this project, so without this guard
+# their UserPromptSubmit carries the whole compression prompt and their Stop
+# carries the summary - both logged back into the files being compressed.
+HOOK_GUARD_ENV = "MEMORY_HOOKS_DISABLED"
+
+
 if __name__ == "__main__":
-    main()
+    # Drop a file named .paused beside this script to disable logging.
+    paused = (Path(__file__).parent / ".paused").exists()
+
+    if os.environ.get(HOOK_GUARD_ENV):
+        print("[HOOK] skipped: compression subprocess", file=sys.stderr)
+    elif not paused:
+        main()

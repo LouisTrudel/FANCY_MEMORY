@@ -3,23 +3,26 @@ Background compression - handles both Episodic and Narrative memory systems.
 
 EPISODIC (tier0 → tier1 → tier2 → ... → tierN):
   - Infinite tiers with formula-based thresholds
-  - tier0: 20KB, tier1: 15KB, tierN (N>=2): 15KB + (N × 5KB)
   - Bullet-point format, timestamped events
 
 NARRATIVE (draft → chapter → book → collection):
-  - Fixed 4-level hierarchy (draft: 25KB, chapter: 20KB, book: 50KB)
-  - Prose format, includes reasoning/thinking
-  - Tells the story of what happened and why
+  - Fixed 4-level hierarchy
+  - Prose format; preserves the narrative arc of the visible exchange
 
-Protection:
-  - Lock file prevents concurrent runs
-  - 30s cooldown between batches
-  - All over-threshold files compress in one batch
+HALF-COMPRESSION STRATEGY:
+  - Only compress the OLDER half of content
+  - Keep the NEWER half in the source tier
+  - Ensures every tier always has some content
+  - Prevents empty files and data gaps
+
+Rate limiting: 60s cooldown, 10/hour max
 """
 
 import subprocess
 import sys
+import os
 import json
+import re
 from pathlib import Path
 from datetime import datetime
 
@@ -83,9 +86,43 @@ def file_size(path: Path) -> int:
     return 0
 
 
+# ============ CONTENT SPLITTING ============
+#
+# FILE ORDER: Oldest content at TOP, newest at BOTTOM (append adds to bottom)
+# SPLIT: First half = OLDER (compress this), Second half = NEWER (keep this)
+# APPEND: Add compressed output to END of next tier (preserves chronology)
+#
+
+def split_content(content: str) -> tuple[str, str]:
+    """
+    Simple line-based split at midpoint.
+    Returns (older_half, newer_half).
+
+    - older_half = first half of lines (TOP of file = oldest)
+    - newer_half = second half of lines (BOTTOM of file = newest)
+
+    Works for both raw content (tier0/draft) and sectioned content (tier1+/chapter+).
+    Section markers naturally fall into correct halves.
+    """
+    lines = content.split('\n')
+
+    if len(lines) < 6:
+        # Too small to split meaningfully, compress all
+        return content, ""
+
+    mid = len(lines) // 2
+
+    older = '\n'.join(lines[:mid]).strip()
+    newer = '\n'.join(lines[mid:]).strip()
+
+    return older, newer
+
+
 # ============ RATE LIMITING ============
 
-COOLDOWN_SECONDS = 30  # Just prevent hammering, no hourly cap
+COOLDOWN_SECONDS = 60     # gate on STARTING a run, not between files in one
+MAX_PER_HOUR = 20         # safety valve against runaway spend
+MAX_PER_RUN = 4           # drain a backlog in one pass (tier0+tier1+tier2+draft)
 
 
 def load_state() -> dict:
@@ -94,7 +131,7 @@ def load_state() -> dict:
             return json.loads(STATE_FILE.read_text(encoding="utf-8"))
         except:
             pass
-    return {"last_compression": None}
+    return {"last_compression": None, "hour_start": None, "count_this_hour": 0}
 
 
 def save_state(state: dict):
@@ -102,7 +139,27 @@ def save_state(state: dict):
     STATE_FILE.write_text(json.dumps(state), encoding="utf-8")
 
 
+def hourly_allowed() -> tuple[bool, str]:
+    """Hourly cap only, with no cooldown. Used between files inside one run."""
+    state = load_state()
+    now = datetime.now().timestamp()
+
+    hour_start = state.get("hour_start")
+    count = state.get("count_this_hour", 0)
+
+    if hour_start and (now - hour_start) < 3600:
+        if count >= MAX_PER_HOUR:
+            return False, f"hourly limit ({MAX_PER_HOUR}/hour)"
+    else:
+        state["hour_start"] = now
+        state["count_this_hour"] = 0
+        save_state(state)
+
+    return True, "ok"
+
+
 def can_compress() -> tuple[bool, str]:
+    """Cooldown + hourly cap. Gates whether a run may START (see main())."""
     state = load_state()
     now = datetime.now().timestamp()
 
@@ -111,13 +168,23 @@ def can_compress() -> tuple[bool, str]:
         remaining = int(COOLDOWN_SECONDS - (now - last))
         return False, f"cooldown ({remaining}s)"
 
-    return True, "ok"
+    return hourly_allowed()
 
 
 def record_compression():
     state = load_state()
-    state["last_compression"] = datetime.now().timestamp()
+    now = datetime.now().timestamp()
+
+    state["last_compression"] = now
+    state["count_this_hour"] = state.get("count_this_hour", 0) + 1
+
+    hour_start = state.get("hour_start")
+    if not hour_start or (now - hour_start) >= 3600:
+        state["hour_start"] = now
+        state["count_this_hour"] = 1
+
     save_state(state)
+    log(f"Compression #{state['count_this_hour']} this hour")
 
 
 # ============ LOCK ============
@@ -187,8 +254,7 @@ DISCARD:
 - Greetings, confirmations ("ok", "got it", "sounds good")
 - Verbose explanations (keep conclusion only)
 - Code blocks and file contents (they exist in files)
-- Thinking/reasoning (that goes in narrative, not episodic)
-
+- Verbose deliberation (keep the conclusion only)
 TIER {tier} GUIDANCE: {guidance}
 
 OUTPUT FORMAT:
@@ -210,7 +276,7 @@ def narrative_prompt(content: str, level: str) -> str:
             "scope": "one work session",
             "structure": """- Opening: What we set out to do
 - Complications: What made it challenging
-- Turning points: Key realizations (use <thinking> content here)
+- Turning points: Key realizations and why they mattered
 - Resolution: What we accomplished
 - Open threads: What's still unresolved""",
         },
@@ -229,7 +295,7 @@ def narrative_prompt(content: str, level: str) -> str:
             "structure": """- What It Is: The project in one paragraph
 - Why It Exists: The problem it solves
 - How It Evolved: Key phases of development
-- Core Insights: The deep lessons
+- Lessons : The deep lessons
 - Current State: Where it stands now""",
         },
     }
@@ -246,18 +312,97 @@ STRUCTURE:
 WRITING STYLE:
 - Prose paragraphs, conversational but clear
 - Show cause → effect ("We tried X, but Y, so we Z")
-- Include reasoning that led to breakthroughs
+- Include the stated rationale behind each breakthrough, as given in the replies
 - Name specific things (files, concepts, decisions)
 - Keep the human element (struggles, realizations, satisfaction)
 
-HANDLING <thinking> BLOCKS:
-These contain internal reasoning. Extract insights and "aha moments"
-but not the mechanical step-by-step. The gold is in realizations.
+Draw on the session's visible exchanges: what was asked, what was decided,
+and what the tools returned. Favor realizations and turning points over
+mechanical step-by-step recaps. The gold is in why choices were made.
 
 INPUT:
 {content}
 
 Write the {ctx["role"]}:"""
+
+
+# ============ OUTPUT VALIDATION ============
+#
+# A compression run DELETES its source, so anything that is not clearly a
+# summary has to be rejected. On 2026-10-15 a 1.19M-char narrative half was
+# replaced by 452 chars of refusal text that the model had echoed back from
+# the tail of its own input. These checks are the gate that stops that.
+#
+
+MIN_SUMMARY_CHARS = 200
+MIN_RATIO = 0.005          # legitimate runs land at 8-12%; the incident was 0.04%
+
+EPISODIC_TAG_RE = re.compile(
+    r"\[(BUILT|FIXED|CHANGED|DECIDED|TRIED|ABANDONED|DISCOVERED"
+    r"|BLOCKED|RESOLVED|REQUESTED|CLARIFIED)\]"
+)
+
+REFUSAL_PATTERNS = [
+    "i won't", "i will not", "i can't help", "i cannot help",
+    "i can't assist", "i cannot assist", "i can't provide",
+    "i cannot provide", "i'm unable", "i am unable", "i'm not able",
+    "i am not able", "i apologize, but", "i don't feel comfortable",
+    "withheld content", "tripped the classifier", "as an ai",
+    "tell me which you want", "let me know which",
+]
+
+
+def _normalize(text: str) -> str:
+    return " ".join(text.split()).lower()
+
+
+def validate_summary(summary: str, source: str, kind: str, label: str) -> tuple[bool, str]:
+    """
+    Gate between the LLM and the memory files. Returns (ok, reason).
+
+    Rejects empty output, output too short to hold the material, refusals,
+    verbatim echoes of the input, and output missing the structure its
+    prompt asked for.
+    """
+    if not summary:
+        return False, "empty output"
+
+    if len(summary) < MIN_SUMMARY_CHARS:
+        return False, f"too short ({len(summary)} < {MIN_SUMMARY_CHARS} chars)"
+
+    ratio = len(summary) / max(len(source), 1)
+    if ratio < MIN_RATIO:
+        return False, (
+            f"ratio {ratio:.5f} below floor {MIN_RATIO} "
+            f"({len(summary)} chars from {len(source)})"
+        )
+
+    low = _normalize(summary)
+
+    for pattern in REFUSAL_PATTERNS:
+        if pattern in low:
+            return False, f"refusal pattern: {pattern!r}"
+
+    # Echo check: the model returning part of its own input instead of a
+    # summary is exactly what happened in the 2026-10-15 incident.
+    probe = low[:400]
+    if len(probe) >= 200 and probe in _normalize(source):
+        return False, "echoes source verbatim"
+
+    if kind == "episodic" and not EPISODIC_TAG_RE.search(summary):
+        return False, "no [TAG] bullets in episodic output"
+
+    if kind == "narrative":
+        breaks = summary.count("\n")
+        if breaks < 4:
+            return False, f"narrative output has {breaks} line breaks, expected prose sections"
+
+    return True, "ok"
+
+
+def pending_path(path: Path) -> Path:
+    """Sidecar holding the half about to be deleted, until the summary validates."""
+    return path.with_name(f"{path.stem}.pending.md")
 
 
 # ============ COMPRESSION LOGIC ============
@@ -266,8 +411,6 @@ def compress_with_claude(content: str, prompt: str) -> str | None:
     """Call Claude CLI to compress content. Uses Sonnet for nuanced compression."""
     try:
         # Use stdin for prompt to avoid shell escaping issues
-        # Run from temp dir so Claude CLI doesn't find project's settings.json/hooks
-        import tempfile
         result = subprocess.run(
             ["claude", "--model", "sonnet", "-p", "-"],
             input=prompt,
@@ -276,7 +419,11 @@ def compress_with_claude(content: str, prompt: str) -> str | None:
             timeout=180,
             encoding="utf-8",
             shell=True,
-            cwd=tempfile.gettempdir()
+            # Mark this process so the logging hooks skip it. Without the
+            # mark, `claude -p` fires UserPromptSubmit/Stop in this project
+            # and writes the prompt and the summary straight back into the
+            # files being compressed.
+            env={**os.environ, "MEMORY_HOOKS_DISABLED": "1"},
         )
 
         if result.returncode != 0:
@@ -302,7 +449,7 @@ def compress_with_claude(content: str, prompt: str) -> str | None:
 
 
 def compress_episodic_tier(n: int) -> bool:
-    """Compress episodic tier N → tier N+1."""
+    """Compress OLDER HALF of episodic tier N → tier N+1, keep newer half."""
     path = episodic_path(n)
     if not path.exists():
         return False
@@ -316,15 +463,33 @@ def compress_episodic_tier(n: int) -> bool:
 
     log(f"Compressing episodic/tier{n}: {size} > {threshold}")
 
-    prompt = episodic_prompt(content, n)
-    summary = compress_with_claude(content, prompt)
+    # Split: compress older half (TOP of file), keep newer half (BOTTOM of file)
+    older, newer = split_content(content)
 
-    if not summary:
+    if not older:
+        log(f"Nothing to compress in tier{n}")
         return False
 
-    log(f"Got summary: {len(summary)} chars ({len(summary)/size*100:.1f}%)")
+    log(f"Split: {len(older)} chars to compress, {len(newer)} chars to keep")
 
-    # Append to next tier
+    # Park the half we are about to delete. Nothing is lost if the
+    # response fails validation below.
+    pending = pending_path(path)
+    pending.write_text(older, encoding="utf-8")
+
+    prompt = episodic_prompt(older, n)
+    summary = compress_with_claude(older, prompt)
+
+    ok, reason = validate_summary(summary or "", older, "episodic", f"tier{n}")
+    if not ok:
+        log(f"REJECTED tier{n} summary: {reason}")
+        log(f"Source half kept in {pending.name}; tier{n} left intact")
+        return False
+
+    log(f"Got summary: {len(summary)} chars ({len(summary)/len(older)*100:.1f}% of older half)")
+
+    # Append to END of next tier (existing + new = chronological order)
+    # Older compressions stay at top, newer compressions added to bottom
     next_path = episodic_path(n + 1)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     entry = f"\n{'='*60}\n## [{timestamp}] From tier{n}\n{'='*60}\n\n{summary}\n"
@@ -332,15 +497,19 @@ def compress_episodic_tier(n: int) -> bool:
     existing = next_path.read_text(encoding="utf-8") if next_path.exists() else ""
     next_path.write_text(existing + entry, encoding="utf-8")
 
-    # Clear current tier
-    path.write_text("", encoding="utf-8")
-    log(f"Cleared episodic/tier{n}, appended to tier{n+1}")
+    # Keep newer half (BOTTOM of original) in current tier
+    path.write_text(newer, encoding="utf-8")
+    pending.unlink(missing_ok=True)   # validated and written: safe to drop
+    log(f"Kept {len(newer)} chars in tier{n}, appended {len(summary)} chars to tier{n+1}")
+
+    # ROBLOX install: semantic extraction runs off the narrative draft only
+    # (see compress_narrative_level); there is no tier1 extraction here.
 
     return True
 
 
 def trigger_semantic():
-    """Run semantic extraction (preferences + antipatterns from narrative)."""
+    """Run semantic extraction (preferences + antipatterns from narrative draft)."""
     try:
         import sys
         sys.path.insert(0, str(Path(__file__).parent))
@@ -351,7 +520,7 @@ def trigger_semantic():
 
 
 def compress_narrative_level(level: str) -> bool:
-    """Compress narrative level → next level."""
+    """Compress OLDER HALF of narrative level → next level, keep newer half."""
     level_idx = NARRATIVE_LEVELS.index(level)
     if level_idx >= len(NARRATIVE_LEVELS) - 1:
         return False  # collection doesn't compress further
@@ -369,15 +538,33 @@ def compress_narrative_level(level: str) -> bool:
 
     log(f"Compressing narrative/{level}: {size} > {threshold}")
 
-    prompt = narrative_prompt(content, level)
-    summary = compress_with_claude(content, prompt)
+    # Split: compress older half (TOP of file), keep newer half (BOTTOM of file)
+    older, newer = split_content(content)
 
-    if not summary:
+    if not older:
+        log(f"Nothing to compress in {level}")
         return False
 
-    log(f"Got summary: {len(summary)} chars ({len(summary)/size*100:.1f}%)")
+    log(f"Split: {len(older)} chars to compress, {len(newer)} chars to keep")
 
-    # Append to next level
+    # Park the half we are about to delete. Nothing is lost if the
+    # response fails validation below.
+    pending = pending_path(path)
+    pending.write_text(older, encoding="utf-8")
+
+    prompt = narrative_prompt(older, level)
+    summary = compress_with_claude(older, prompt)
+
+    ok, reason = validate_summary(summary or "", older, "narrative", level)
+    if not ok:
+        log(f"REJECTED {level} summary: {reason}")
+        log(f"Source half kept in {pending.name}; {level} left intact")
+        return False
+
+    log(f"Got summary: {len(summary)} chars ({len(summary)/len(older)*100:.1f}% of older half)")
+
+    # Append to END of next level (existing + new = chronological order)
+    # Older compressions stay at top, newer compressions added to bottom
     next_level = NARRATIVE_LEVELS[level_idx + 1]
     next_path = narrative_path(next_level)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -386,46 +573,74 @@ def compress_narrative_level(level: str) -> bool:
     existing = next_path.read_text(encoding="utf-8") if next_path.exists() else ""
     next_path.write_text(existing + entry, encoding="utf-8")
 
-    # Trigger semantic extraction BEFORE clearing draft (needs the content)
+    # semantic.py reads draft.md off disk, so it has to see exactly the half we
+    # just archived: not the half we keep, and not both (that double-extracts).
+    # Expose `older` for the extraction, then restore `newer` in a finally, so a
+    # failure inside semantic.py cannot strand the half we are retaining.
     if level == "draft":
-        trigger_semantic()
+        try:
+            path.write_text(older, encoding="utf-8")
+            trigger_semantic()
+        finally:
+            path.write_text(newer, encoding="utf-8")
+    else:
+        path.write_text(newer, encoding="utf-8")
 
-    # Clear current level
-    path.write_text("", encoding="utf-8")
-    log(f"Cleared narrative/{level}, appended to {next_level}")
+    pending.unlink(missing_ok=True)   # validated and written: safe to drop
+    log(f"Kept {len(newer)} chars in {level}, appended {len(summary)} chars to {next_level}")
 
     return True
 
 
 def cascade_compress():
-    """Compress ALL files over threshold in one run.
+    """Check all tiers/levels and compress as needed.
 
-    Rate limiting happens in main() before this is called.
-    No per-file rate limiting - compress everything that needs it.
+    The cooldown gates whether a run may start (main()); inside a run we
+    compress up to MAX_PER_RUN files back to back. Re-checking the cooldown
+    between files meant a run could only ever handle ONE file, so whatever
+    came first in cascade order starved everything downstream - and tier0,
+    which refills fastest, is always first. Under continuous use (an agent
+    running unattended for hours) tier0 took every slot and tier1+ never
+    drained.
     """
     compressed_count = 0
 
-    # Episodic: check all existing tiers
-    for n in range(100):
+    def may_continue() -> tuple[bool, str]:
+        if compressed_count >= MAX_PER_RUN:
+            return False, f"per-run limit ({MAX_PER_RUN}/run)"
+        return hourly_allowed()
+
+    # Episodic: check tier0, tier1, ... until one doesn't exist
+    for n in range(100):  # safety limit
         path = episodic_path(n)
-        if not path.exists():
+        if n > 0 and not path.exists():
             break
+
         if file_size(path) > episodic_threshold(n):
+            allowed, reason = may_continue()
+            if not allowed:
+                log(f"Stopping run: {reason}; backlog resumes next run")
+                return compressed_count
+
             if compress_episodic_tier(n):
+                record_compression()
                 compressed_count += 1
 
-    # Narrative: check draft, chapter, book
+    # Narrative: check draft, chapter, book (not collection)
     for level in NARRATIVE_LEVELS[:-1]:  # exclude collection
         path = narrative_path(level)
         if not path.exists():
             continue
-        if file_size(path) > NARRATIVE_THRESHOLDS[level]:
-            if compress_narrative_level(level):
-                compressed_count += 1
 
-    # Record once for the whole batch
-    if compressed_count > 0:
-        record_compression()
+        if file_size(path) > NARRATIVE_THRESHOLDS[level]:
+            allowed, reason = may_continue()
+            if not allowed:
+                log(f"Stopping run: {reason}; backlog resumes next run")
+                return compressed_count
+
+            if compress_narrative_level(level):
+                record_compression()
+                compressed_count += 1
 
     return compressed_count
 
