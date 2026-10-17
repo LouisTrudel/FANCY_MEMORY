@@ -21,9 +21,9 @@ NARRATIVE_DIR = BASE_DIR / "memory" / "narrative"
 DEBUG_LOG = Path(__file__).parent / "events.log"
 COMPRESS_SCRIPT = Path(__file__).parent / "compress.py"
 
-# Thresholds (must match compress.py)
-EPISODIC_TIER0_THRESHOLD = 20_000
-NARRATIVE_DRAFT_THRESHOLD = 25_000
+# No threshold constants here on purpose: over_threshold() imports the table
+# from compress.py, which owns it. A second copy drifted once already - draft
+# stayed at 25_000 after compress.py moved to 50_000.
 
 
 def ensure_dirs():
@@ -63,7 +63,7 @@ def log_narrative(role: str, content: str):
 # carrying entire tool payloads (~9KB each, pretty-printed over ~31 lines) that
 # feed neither episodic nor narrative memory. Only Stop and UserPromptSubmit
 # drive the memory system, so only those are kept, one compact line each.
-DEBUG_EVENTS = {"Stop", "UserPromptSubmit"}
+DEBUG_EVENTS = {"Stop", "UserPromptSubmit", "SubagentStop"}
 DEBUG_MAX_BYTES = 10_000_000      # rotate past this; set to 0 to log nothing
 DEBUG_MAX_PAYLOAD = 4_000         # truncate any single payload past this
 
@@ -149,6 +149,36 @@ def maybe_compress():
         )
 
 
+# A delegated run can return a very long report, and a heavy session delegates
+# ~100 times. 2_000 bytes keeps the task and its outcome while capping what one
+# agent can add to a 20_000-byte tier.
+SUBAGENT_REPORT_CAP = 2_000
+
+
+def clip(text: str, cap: int) -> str:
+    """Trim to cap, marking what was dropped so a short report is never ambiguous."""
+    if len(text) <= cap:
+        return text
+    return text[:cap] + f"\n[...report clipped from {len(text)} bytes]"
+
+
+def subagent_report(data: dict) -> tuple:
+    """(label, report) from a SubagentStop payload; ("", "") when unusable.
+
+    The payload schema is not documented, so take the inline message if it is
+    there and fall back to the subagent's own transcript. SubagentStop is in
+    DEBUG_EVENTS, so events.log keeps the real keys for refining this later.
+    """
+    label = (data.get("agent_type") or data.get("subagent_type")
+             or data.get("agent_name") or data.get("description") or "subagent")
+    text = data.get("last_assistant_message") or ""
+    if not text:
+        path = data.get("transcript_path")
+        if path:
+            text = extract_last_assistant(path).get("text") or ""
+    return str(label).strip() or "subagent", text
+
+
 def extract_last_assistant(transcript_path: str) -> dict:
     """Return the last assistant message's visible text from the transcript JSONL."""
     result = {"text": None}
@@ -208,6 +238,17 @@ def main():
                     # Narrative: the visible reply
                     log_narrative('Claude', assistant['text'])
 
+            maybe_compress()
+
+        elif event == "SubagentStop":
+            label, report = subagent_report(data)
+            if report:
+                entry = clip(report, SUBAGENT_REPORT_CAP)
+                log_episodic(f"Subagent({label})", entry)
+                log_narrative(f"Subagent({label})", entry)
+
+            # Not deferred to the next main Stop: a long delegated stretch can
+            # add 100+ capped reports before one arrives.
             maybe_compress()
 
     except Exception as e:

@@ -58,9 +58,13 @@ def inject_memory() -> str:
     # them - and dropping a user message is the worst failure this filter has.
     # The cost is that a reply quoting a marker at column 0 splits a turn in
     # two, which is visible and harmless next to losing the user's words.
+    # Subagent(<type>) is a third role. It has to be a boundary here, not just
+    # a recognised name: without it a delegated report is swallowed into the
+    # preceding Claude turn's body and clipped away with it.
+    ROLE = r"User|Claude|Subagent\([^)]*\)"
     TURN_RE = re.compile(
-        r"^\*\*\[(\d{2}:\d{2}:\d{2})\] (User|Claude):\*\*[ \t]*\n"
-        r"(.*?)(?=^\*\*\[\d{2}:\d{2}:\d{2}\] (?:User|Claude):\*\*|\Z)",
+        r"^\*\*\[(\d{2}:\d{2}:\d{2})\] (" + ROLE + r"):\*\*[ \t]*\n"
+        r"(.*?)(?=^\*\*\[\d{2}:\d{2}:\d{2}\] (?:" + ROLE + r"):\*\*|\Z)",
         re.S | re.M,
     )
 
@@ -81,7 +85,7 @@ def inject_memory() -> str:
         kept, used = [], 0
         for ts, role, body in reversed(turns):
             body = body.strip()
-            if role == "Claude" and len(body) > REPLY_HEAD:
+            if role != "User" and len(body) > REPLY_HEAD:
                 body = body[:REPLY_HEAD].rstrip() + " [...]"
             entry = f"**[{ts}] {role}:** {body}"
             if used + len(entry) > budget:
