@@ -105,25 +105,37 @@ NARRATIVE LOG:
 {draft[-20000:]}
 
 TASK:
-Output the COMPLETE UPDATED preferences.md file.
-- UPDATE existing entries if new info refines them
-- ADD new entries for new preferences found
-- REMOVE entries that are explicitly contradicted
-- KEEP entries not mentioned (no change = keep)
+Output the COMPLETE UPDATED preferences.md file, in two passes.
+
+PASS 1 - CONSOLIDATE the existing list. Do this every run, even when the
+log adds nothing:
+- Merge any entries that express the same preference, however differently
+  worded. Treat roughly 80% overlap in meaning as the same preference.
+- Keep the more specific phrasing, and the EARLIER date - the date records
+  when the preference was established, not when it was last rewritten.
+- Entries with no duplicate carry over unchanged.
+
+PASS 2 - APPLY the narrative log:
+- UPDATE an entry when the log refines it (keep its original date)
+- ADD an entry only for a preference no existing entry already covers
+- REMOVE an entry the log explicitly contradicts
 
 FORMAT:
 # Preferences
 
-- [{today}] Preference statement here.
-- [{today}] Another preference.
+- [YYYY-MM-DD] Preference statement here.
+- [YYYY-MM-DD] Another preference.
 
 RULES:
-- One line per preference
-- Date in brackets at start
+- Pass 1 is the priority. A file returned with two entries saying the same
+  thing has failed, even when neither entry came from this log.
+- One line per preference, date in brackets at the start
+- PRESERVE the existing date on every entry you carry over. Use [{today}]
+  only for an entry added by this run.
 - Be concise but specific
-- Merge similar entries (don't duplicate)
-- Max {PREFS_CAP} entries (drop oldest if exceeded)
-- If nothing new found, output existing file unchanged
+- Max {PREFS_CAP} entries. If still over after pass 1, merge the most
+  similar remaining pairs - do not silently drop entries.
+- Output the file and nothing else: no preamble, no commentary
 
 Output the complete file:"""
 
@@ -167,26 +179,39 @@ NARRATIVE LOG:
 {draft[-20000:]}
 
 TASK:
-Output the COMPLETE UPDATED antipatterns.md file.
-- UPDATE existing entries if more context found
-- ADD new antipatterns discovered
-- REMOVE if explicitly resolved/outdated
-- KEEP entries not mentioned (no change = keep)
+Output the COMPLETE UPDATED antipatterns.md file, in two passes.
+
+PASS 1 - CONSOLIDATE the existing list. Do this every run, even when the
+log adds nothing:
+- Merge any entries teaching the same lesson, however differently worded.
+  One lesson in three wordings is one entry, not three.
+- Keep the phrasing with the most specific detail (file, function, reason)
+  and the EARLIER date.
+- Entries with no duplicate carry over unchanged.
+
+PASS 2 - APPLY the narrative log:
+- UPDATE an entry when the log adds context (keep its original date)
+- ADD an entry only for a mistake no existing entry already covers
+- REMOVE an entry the log shows was resolved or is now wrong
 
 FORMAT:
 # Antipatterns
 
-- [{today}] DON'T do X. Instead do Y. (reason)
-- [{today}] AVOID approach because consequence.
+- [YYYY-MM-DD] DON'T do X. Instead do Y. (reason)
+- [YYYY-MM-DD] AVOID approach because consequence.
 
 RULES:
-- One line per antipattern
-- Date in brackets at start
+- Pass 1 is the priority. A file returned with one lesson stated twice has
+  failed, even when neither entry came from this log.
+- One line per antipattern, date in brackets at the start
 - Start with DON'T, AVOID, NEVER, or similar
 - Include the correct alternative when known
 - Be specific (include function/file names when relevant)
-- Max {ANTIPATTERNS_CAP} entries (drop oldest if exceeded)
-- If nothing new found, output existing file unchanged
+- PRESERVE the existing date on every entry you carry over. Use [{today}]
+  only for an entry added by this run.
+- Max {ANTIPATTERNS_CAP} entries. If still over after pass 1, merge the
+  most similar remaining pairs - do not silently drop entries.
+- Output the file and nothing else: no preamble, no commentary
 
 Output the complete file:"""
 

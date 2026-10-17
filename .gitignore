@@ -40,6 +40,10 @@ __pycache__/
 # Salvaged reference material, kept locally and never shipped to a clone
 .reference/
 
+# Snapshots taken before normalizing memory layers by hand. Generated data
+# like .claude/memory itself, and specific to one install's history.
+.claude/memory_backups/
+
 # This project's own working docs - a clone starts its own, it doesn't inherit these
 PLAN_memory_improvements.md
 requirements.txt

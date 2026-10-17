@@ -23,6 +23,7 @@ import sys
 import os
 import json
 import re
+import tempfile
 from pathlib import Path
 from datetime import datetime
 
@@ -37,7 +38,12 @@ LOG_FILE = Path(__file__).parent / "compress.log"
 # Narrative level order
 NARRATIVE_LEVELS = ["draft", "chapter", "book", "collection"]
 NARRATIVE_THRESHOLDS = {
-    "draft": 25_000,       # Raw logs → ~6KB chapter entry (inject tail)
+    # Half-split means the input per call is HALF the threshold. Prose needs a
+    # wide window to carry an arc; a chapter entry built from ~12 turns is a
+    # fragment. 50K gives a 25K input (~25 turns) and costs nothing at
+    # injection time, because draft is never injected. Measured draft->chapter
+    # is ~36%, so expect a ~9KB chapter entry per call.
+    "draft": 50_000,
     "chapter": 20_000,     # Injectable fully (~5K tokens)
     "book": 50_000,        # Search/on-demand only
     "collection": 100_000, # Archive (rarely compresses)
@@ -335,7 +341,12 @@ Write the {ctx["role"]}:"""
 #
 
 MIN_SUMMARY_CHARS = 200
-MIN_RATIO = 0.005          # legitimate runs land at 8-12%; the incident was 0.04%
+# Measured in compress.log, NOT the 8-12% this comment used to claim:
+# tier0->tier1 28-33%, tier1->tier2 18%, draft->chapter 29-45%,
+# chapter->book 88.5% (that stage is relocating bytes, not compressing).
+# The floor stays far below the real range on purpose: it is a guard
+# against garbage output, not a compression target. The incident was 0.04%.
+MIN_RATIO = 0.005
 
 EPISODIC_TAG_RE = re.compile(
     r"\[(BUILT|FIXED|CHANGED|DECIDED|TRIED|ABANDONED|DISCOVERED"
@@ -424,6 +435,13 @@ def compress_with_claude(content: str, prompt: str) -> str | None:
             # and writes the prompt and the summary straight back into the
             # files being compressed.
             env={**os.environ, "MEMORY_HOOKS_DISABLED": "1"},
+            # Run from a temp dir so the subprocess does not load THIS project's
+            # CLAUDE.md and .mcp.json. Inheriting the project cwd handed every
+            # summarizer the instructions "FIRST ACTION: inject_memory()" and
+            # "Never assume intent - ask if unclear", so a run could spend its
+            # first step loading memory, or return a clarifying question instead
+            # of a summary. semantic.py already did this; compress.py did not.
+            cwd=tempfile.gettempdir(),
         )
 
         if result.returncode != 0:

@@ -124,7 +124,18 @@ def over_threshold() -> list:
 
 
 def maybe_compress():
-    """Spawn compression if any tier or narrative level exceeds its threshold."""
+    """Spawn compression if any tier or narrative level exceeds its threshold.
+
+    A .compression-paused flag in memory/ suspends compression only, without
+    touching the thresholds, so a maintenance pass can rewrite memory files
+    without a trigger firing into them mid-edit. Logging continues. Delete the
+    file to resume. (The heavier switch is hooks/.paused, which stops logging
+    too - see __main__ below.)
+    """
+    if (BASE_DIR / "memory" / ".compression-paused").exists():
+        print("[HOOK] compression paused (.compression-paused present)", file=sys.stderr)
+        return
+
     over = over_threshold()
 
     if over:
