@@ -341,11 +341,20 @@ Write the {ctx["role"]}:"""
 #
 
 MIN_SUMMARY_CHARS = 200
-# Measured in compress.log, NOT the 8-12% this comment used to claim:
-# tier0->tier1 28-33%, tier1->tier2 18%, draft->chapter 29-45%,
-# chapter->book 88.5% (that stage is relocating bytes, not compressing).
-# The floor stays far below the real range on purpose: it is a guard
-# against garbage output, not a compression target. The incident was 0.04%.
+# Measured in compress.log, NOT the 8-12% an earlier version of this comment
+# claimed: tier0->tier1 21-33%, tier1->tier2 18-69%, draft->chapter 22-45%,
+# chapter->book 74-88%, book->collection 30%.
+#
+# Ratios RISE with the level, and that is the design working, not a fault. Each
+# file holds the previous level's output, so a later stage is summarizing text
+# that is already dense - there is little left to remove, and squeezing harder
+# would cost detail rather than bytes. Half-split exists for the same reason:
+# compressing a whole file on threshold used to leave empty files behind. So
+# tier3+ and collection.md are meant to be small and very dense, not small and
+# shrinking further. Do not "fix" a high-level ratio by tightening a prompt.
+#
+# The floor stays far below every observed value on purpose: it guards against
+# garbage output, not loose compression. The 2026-10-15 incident was 0.04%.
 MIN_RATIO = 0.005
 
 EPISODIC_TAG_RE = re.compile(

@@ -169,11 +169,20 @@ def subagent_report(data: dict) -> tuple:
     there and fall back to the subagent's own transcript. SubagentStop is in
     DEBUG_EVENTS, so events.log keeps the real keys for refining this later.
     """
+    # Observed across 37 real payloads: agent_type is always present but is an
+    # empty string for 14 of them (unnamed/default agents), hence the fallback
+    # to a generic label. "description" was in the guessed chain and is dropped
+    # here - it only ever appears nested inside background_tasks, never at the
+    # top level, so it could not have matched.
     label = (data.get("agent_type") or data.get("subagent_type")
-             or data.get("agent_name") or data.get("description") or "subagent")
+             or data.get("agent_name") or "subagent")
     text = data.get("last_assistant_message") or ""
     if not text:
-        path = data.get("transcript_path")
+        # agent_transcript_path, NOT transcript_path. The payload carries both:
+        # transcript_path is the MAIN session's, so using it would log the main
+        # thread's last message as this subagent's report - a wrong footprint,
+        # which is worse than a thin one.
+        path = data.get("agent_transcript_path")
         if path:
             text = extract_last_assistant(path).get("text") or ""
     return str(label).strip() or "subagent", text

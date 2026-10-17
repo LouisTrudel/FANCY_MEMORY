@@ -26,7 +26,15 @@ SKILLS_DIR = SEMANTIC_DIR / "skills"
 LOG_FILE = Path(__file__).parent / "semantic.log"
 
 # Thresholds
-PREFS_ANTI_THRESHOLD = 8_000    # Combined size to trigger Level 1 compact
+# Matches what the injector can actually carry: mcp_server.py budgets
+# preferences 6_000 + antipatterns 7_000. At the old 8_000 this fired at 62%
+# of that, so Level 1 moved domain-specific entries into skillTree.md while
+# the injected files still had ~75% headroom - and since skillTree stopped
+# being injected, those entries left context for good (template 24 -> 7
+# antipatterns, ROBLOX 19 -> 6). Level 1 is a relief valve for genuine
+# overflow, not a routine drain; PREFS_CAP/ANTIPATTERNS_CAP are the real
+# ceiling, and Level 0's PASS 1 dedups every run.
+PREFS_ANTI_THRESHOLD = 13_000   # Combined size to trigger Level 1 compact
 SKILL_TREE_THRESHOLD = 10_000   # Size to trigger Level 2 compact
 
 # Level 2 (promoting tree candidates into skills/*.md) is off. It cannot
