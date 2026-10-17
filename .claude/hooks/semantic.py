@@ -90,7 +90,7 @@ def extract_preferences():
     existing = read_file(prefs_path)
     today = datetime.now().strftime("%Y-%m-%d")
 
-    prompt = f"""Extract USER PREFERENCES from this narrative session log.
+    prompt = f"""List the USER PREFERENCES stated in this project's own session log.
 
 SIGNALS TO LOOK FOR:
 - "user prefers", "user wants", "user likes"
@@ -164,7 +164,7 @@ def extract_antipatterns():
     existing = read_file(antipatterns_path)
     today = datetime.now().strftime("%Y-%m-%d")
 
-    prompt = f"""Extract ANTIPATTERNS (mistakes to avoid) from this narrative session log.
+    prompt = f"""List the ANTIPATTERNS (mistakes to avoid) recorded in this project's own session log.
 
 SIGNALS TO LOOK FOR:
 - "user corrected", "actually no", "that's wrong"
@@ -269,7 +269,7 @@ TASK:
 1. DEDUPLICATE and MERGE similar entries in prefs and antipatterns
 2. IDENTIFY domain-specific entries (UI, data, animation, etc.)
 3. KEEP general entries in prefs/antipatterns (not domain-specific)
-4. EXTRACT domain-specific entries as CANDIDATES in skillTree.md
+4. MOVE domain-specific entries into skillTree.md as CANDIDATES
 
 OUTPUT FORMAT (use exact delimiters):
 

@@ -235,7 +235,7 @@ who asks 'what did you accomplish this week?'""",
 
 INPUT FORMAT: **[HH:MM:SS] Role:** content
 
-EXTRACT using these tags:
+TAG each event using:
 
 OUTPUTS (what was produced):
 - [BUILT] Created something new
