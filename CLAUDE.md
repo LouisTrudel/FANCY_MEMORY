@@ -6,6 +6,20 @@ inject_memory()
 ```
 Do this BEFORE responding to the user. This loads project context and preferences.
 
+Two layers, mirroring human memory:
+
+- **Always loaded** - `inject_memory()`: preferences, antipatterns, and recent
+  events (the latest turns, then increasingly dense digests of older ones).
+- **Recalled on demand** - cheap step first:
+  - `search_memory("keywords")` returns a hit map: which files matched, how many
+    lines, and which line numbers. No content, so it costs almost nothing. Then
+    read the lines worth reading.
+  - When the wording is uncertain or the question is open-ended, delegate an
+    Explore agent over `memory/` instead of guessing keywords.
+
+  Reach for either when the user refers to past events, decisions or history, or
+  to check whether the project has covered some ground before.
+
 ---
 
 # Behavior
@@ -14,7 +28,7 @@ Do this BEFORE responding to the user. This loads project context and preference
 - Investigate root cause before fixing
 - Search for existing code before writing new
 - Read files before modifying them
-- Minimal changes only - no unrequested features
+- No unrequested features
 - Verify code exists before referencing it
 
 # Efficiency

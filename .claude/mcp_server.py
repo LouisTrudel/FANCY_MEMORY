@@ -192,64 +192,84 @@ def inject_memory() -> str:
 @mcp.tool()
 def search_memory(query: str) -> str:
     """
-    Search through all memory files for keywords.
+    Locate where a topic appears across memory. Returns a hit map, not content.
 
-    Use when user asks about past events, decisions, or project history.
-    Examples: "what happened yesterday", "why did we use X", "when did we fix Y"
+    Per file: how many lines matched, and which line numbers. Read the lines you
+    want afterward, or hand an Explore agent the memory folder when the question
+    is open-ended and you do not know the right keyword yet.
+
+    Use when the user refers to past events, decisions or history, or to check
+    whether the project has covered some ground before.
 
     Args:
-        query: Search terms (space-separated keywords)
+        query: Search terms, space-separated. Terms are OR'd; with more than one
+               term the map also reports which lines matched ALL of them.
 
-    Returns matching sections with file context.
+    Returns a per-file hit map, densest file first.
     """
     if not MEMORY_DIR.exists():
         return "No memory directory found."
 
-    # Extract keywords (words with 3+ chars, lowercased)
-    keywords = [w.lower() for w in re.findall(r'\w+', query) if len(w) >= 3]
+    keywords = [w.lower() for w in re.findall(r"\w+", query) if len(w) >= 3]
     if not keywords:
         return "No valid search terms. Use words with 3+ characters."
 
-    results = []
-    max_results = 10
-    context_lines = 3
+    # A map stays small however many hits there are, so there is no result cap -
+    # the old 10-hit cap plus alphabetical file order meant a common term filled
+    # every slot from episodic/tier0 and narrative/ was never reached at all.
+    MAX_LINES_SHOWN = 24
 
-    # Search all .md files under memory/
+    rows, seen_dirs, hit_dirs, scanned = [], set(), set(), 0
     for md_file in sorted(MEMORY_DIR.rglob("*.md")):
         try:
-            content = md_file.read_text(encoding="utf-8")
-            lines = content.split("\n")
-
-            # Find lines matching any keyword
-            for i, line in enumerate(lines):
-                line_lower = line.lower()
-                matched_keywords = [kw for kw in keywords if kw in line_lower]
-
-                if matched_keywords:
-                    # Get context (surrounding lines)
-                    start = max(0, i - context_lines)
-                    end = min(len(lines), i + context_lines + 1)
-                    context = "\n".join(lines[start:end])
-
-                    # Relative path for cleaner output
-                    rel_path = md_file.relative_to(MEMORY_DIR)
-
-                    results.append(f"### {rel_path} (line {i+1})\nMatched: {', '.join(matched_keywords)}\n```\n{context}\n```")
-
-                    if len(results) >= max_results:
-                        break
-
-            if len(results) >= max_results:
-                break
-
+            lines = md_file.read_text(encoding="utf-8", errors="replace").split("\n")
         except Exception:
             continue
+        scanned += 1
 
-    if not results:
-        return f"No matches found for: {', '.join(keywords)}"
+        hits, all_hits = [], []
+        for i, line in enumerate(lines, start=1):
+            low = line.lower()
+            matched = [kw for kw in keywords if kw in low]
+            if matched:
+                hits.append(i)
+                if len(matched) == len(keywords) > 1:
+                    all_hits.append(i)
 
-    header = f"Found {len(results)} matches for: {', '.join(keywords)}\n\n"
-    return header + "\n\n".join(results)
+        rel = md_file.relative_to(MEMORY_DIR).as_posix()
+        top = rel.split("/")[0] if "/" in rel else "."
+        seen_dirs.add(top)
+        if hits:
+            rows.append((len(hits), rel, hits, all_hits))
+            hit_dirs.add(top)
+
+    if not rows:
+        return (f"No matches for: {', '.join(keywords)}  ({scanned} files scanned)\n"
+                "Try fewer or broader terms, or delegate an Explore agent over "
+                "memory/ if the wording is uncertain.")
+
+    rows.sort(key=lambda r: (-r[0], r[1]))
+    width = max(len(r[1]) for r in rows)
+
+    out = [f"Hit map for: {', '.join(keywords)}   "
+           f"({len(rows)} of {scanned} files matched)", ""]
+    for count, rel, hits, all_hits in rows:
+        shown = ", ".join(str(n) for n in hits[:MAX_LINES_SHOWN])
+        if len(hits) > MAX_LINES_SHOWN:
+            shown += f", +{len(hits) - MAX_LINES_SHOWN} more"
+        label = "hits  lines" if count != 1 else "hit   line "
+        line = f"  {rel:<{width}}  {count:>4} {label} {shown}"
+        if all_hits:
+            line += f"\n  {'':<{width}}         all terms on line{'s' if len(all_hits) > 1 else ''} " \
+                    + ", ".join(str(n) for n in all_hits[:8])
+        out.append(line)
+
+    silent = sorted(d for d in seen_dirs - hit_dirs if d != ".")
+    if silent:
+        out += ["", "  nothing in: " + ", ".join(f"{d}/" for d in silent)]
+    out += ["", "  Read the lines you need, or delegate an Explore agent over "
+            "memory/ for open-ended recall."]
+    return "\n".join(out)
 
 
 if __name__ == "__main__":
