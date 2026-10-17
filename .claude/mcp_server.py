@@ -33,7 +33,10 @@ def inject_memory() -> str:
 
     LIMITS = {
         "preferences": 6_000,     # tracks PREFS_CAP = 40 in semantic.py
-        "antipatterns": 7_000,    # tracks ANTIPATTERNS_CAP = 30 at ~234b/entry
+        # 11_000 = ANTIPATTERNS_CAP (40) x the measured ~262b/entry. Keep these
+        # two in step: a budget below its own entry cap truncates a full list,
+        # which is the unit mismatch this file's antipatterns warn about.
+        "antipatterns": 11_000,
         # no skill_tree entry: lookup-only, never injected, so it needs no cap
         # 20_000 so tier1 injects WHOLE even at its 15K compression threshold:
         # pass 1 gives tier1 10_000 and tier2 5_000, then pass 2 hands tier1

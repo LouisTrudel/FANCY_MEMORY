@@ -57,7 +57,7 @@ MIN_SKILL_ENTRIES = 5           # Minimum entries to form a skill
 
 # File caps (lines)
 PREFS_CAP = 40
-ANTIPATTERNS_CAP = 30
+ANTIPATTERNS_CAP = 40   # 40 x ~262b measured = ~10.5KB, matched by the injector's 11_000
 
 
 def log(msg: str):
