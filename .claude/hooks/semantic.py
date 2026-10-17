@@ -28,6 +28,23 @@ LOG_FILE = Path(__file__).parent / "semantic.log"
 # Thresholds
 PREFS_ANTI_THRESHOLD = 8_000    # Combined size to trigger Level 1 compact
 SKILL_TREE_THRESHOLD = 10_000   # Size to trigger Level 2 compact
+
+# Level 2 (promoting tree candidates into skills/*.md) is off. It cannot
+# currently succeed, and each success made the next run worse:
+#
+#   compact_skill_tree() interpolates `existing_skills`, a dict of EVERY skill
+#   file's full body. With 36 skills that is 116KB of bodies on top of a 31KB
+#   tree - a ~149KB (~44K token) prompt against timeout=120. It last succeeded
+#   on 2026-10-16 at ~101s with fewer skills, then timed out at 138s and 178s.
+#   SKILL_TREE_THRESHOLD only measures skillTree.md, 21% of the real payload,
+#   so the gate never saw the cost coming.
+#
+# Before re-enabling: pass skill NAMES and KEYWORDS rather than bodies (Level 1
+# already does this - see the f.stem read in compact_to_skill_tree), size the
+# gate against the real prompt, and decide what retires a stale skill. Nothing
+# reads skills/*.md today except Level 2 itself, so nothing is lost meanwhile;
+# candidates keep accumulating in skillTree.md, which is the monitoring surface.
+LEVEL2_ENABLED = False
 MIN_SKILL_ENTRIES = 5           # Minimum entries to form a skill
 
 # File caps (lines)
@@ -367,6 +384,10 @@ Output all three sections:"""
 
 def compact_skill_tree():
     """Compact skillTree.md, create skill files for strong clusters."""
+    if not LEVEL2_ENABLED:
+        log("Level 2 disabled (LEVEL2_ENABLED = False)")
+        return
+
     tree_path = SEMANTIC_DIR / "skillTree.md"
     tree = read_file(tree_path)
 
@@ -510,11 +531,15 @@ def on_draft_compress():
         log("=== Level 1 complete ===")
 
         # Check if Level 2 needed
-        tree = read_file(SEMANTIC_DIR / "skillTree.md")
-        if len(tree) > SKILL_TREE_THRESHOLD:
-            log("=== Level 2: Creating skills ===")
-            compact_skill_tree()
-            log("=== Level 2 complete ===")
+        if not LEVEL2_ENABLED:
+            log("Level 2 disabled (LEVEL2_ENABLED = False); "
+                "candidates stay in skillTree.md")
+        else:
+            tree = read_file(SEMANTIC_DIR / "skillTree.md")
+            if len(tree) > SKILL_TREE_THRESHOLD:
+                log("=== Level 2: Creating skills ===")
+                compact_skill_tree()
+                log("=== Level 2 complete ===")
 
 
 def manual_compact():
