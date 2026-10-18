@@ -169,13 +169,15 @@ def subagent_report(data: dict) -> tuple:
     there and fall back to the subagent's own transcript. SubagentStop is in
     DEBUG_EVENTS, so events.log keeps the real keys for refining this later.
     """
-    # Observed across 37 real payloads: agent_type is always present but is an
-    # empty string for 14 of them (unnamed/default agents), hence the fallback
-    # to a generic label. "description" was in the guessed chain and is dropped
-    # here - it only ever appears nested inside background_tasks, never at the
-    # top level, so it could not have matched.
-    label = (data.get("agent_type") or data.get("subagent_type")
-             or data.get("agent_name") or "subagent")
+    # An EMPTY agent_type does not mean an unnamed agent - it means this is not
+    # a subagent report at all. Measured on 37 real payloads: 23 carried a real
+    # agent_type (studio-builder, critic, playtester, Explore) and their reports
+    # logged correctly; the other 14 were empty AND carried the USER's own last
+    # message in last_assistant_message. Treating empty as "unnamed" filed the
+    # user's words under Subagent(subagent).
+    label = (data.get("agent_type") or "").strip()
+    if not label:
+        return "", ""
     text = data.get("last_assistant_message") or ""
     if not text:
         # agent_transcript_path, NOT transcript_path. The payload carries both:
@@ -221,7 +223,12 @@ def extract_last_assistant(transcript_path: str) -> dict:
 
 def main():
     try:
-        raw = sys.stdin.read()
+        # Read bytes and decode UTF-8 explicitly. sys.stdin.read() uses the
+        # locale codec, which on Windows is cp1252 - so emoji and dashes in
+        # the payload arrived mojibaked ("Ã—", "â€“") and were then written
+        # faithfully as UTF-8 into tier0 and draft. The corruption entered at
+        # the very first step, before any memory file was touched.
+        raw = sys.stdin.buffer.read().decode("utf-8", errors="replace")
         data = json.loads(raw) if raw.strip() else {}
         event = data.get("hook_event_name", "UNKNOWN")
 
@@ -230,6 +237,13 @@ def main():
 
         if event == "UserPromptSubmit":
             prompt = data.get("prompt", "")
+            # A <task-notification> is the harness reporting that a background
+            # agent finished - it is not the user speaking, and the report it
+            # carries arrives again through SubagentStop. Logging it put the
+            # same text in the memory twice and under the wrong speaker.
+            if prompt.lstrip().startswith("<task-notification>"):
+                print("[HOOK] skipping task-notification", file=sys.stderr)
+                prompt = ""
             if prompt:
                 # Log to both systems
                 log_episodic("User", prompt)

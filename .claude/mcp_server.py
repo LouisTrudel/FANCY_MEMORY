@@ -72,12 +72,23 @@ def inject_memory() -> str:
     )
 
     def read_file(path, max_chars=None):
+        """Read a file, trimming to max_chars at an ENTRY boundary.
+
+        A flat slice cut mid-sentence - a live session reported Antipatterns
+        ending at "DON'T keep Remote", which reads as a complete instruction
+        and is not one. Back up to the last entry that fits instead.
+        """
         if not path.exists():
             return ""
         content = path.read_text(encoding="utf-8").strip()
-        if max_chars and len(content) > max_chars:
-            return content[:max_chars] + "\n\n[...truncated...]"
-        return content
+        if not max_chars or len(content) <= max_chars:
+            return content
+        cut = content.rfind("\n- ", 0, max_chars)
+        if cut == -1:                      # no entry boundary: fall back to a line
+            cut = content.rfind("\n", 0, max_chars)
+        if cut == -1:
+            cut = max_chars
+        return content[:cut].rstrip() + "\n\n[...truncated at entry boundary...]"
 
     def recent_exchange(budget):
         """Newest tier0 turns: user verbatim, replies clipped to their head."""
