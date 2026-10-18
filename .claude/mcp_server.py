@@ -156,16 +156,20 @@ def inject_memory() -> str:
     if anti:
         sections.append(f"## Antipatterns\n{anti}")
 
-    # skillTree is lookup-only, so it is NOT injected - it had been, at a
-    # 2_000-char head-truncated cap, which cut 72% of a 7_100-byte file and
-    # silently dropped most antipatterns after Level 1 moved them there. A
-    # pointer costs ~150 chars instead of 2_000 and keeps it discoverable.
-    if (SEMANTIC_DIR / "skillTree.md").exists():
+    # A pointer, not content. These files are the recall half of the system:
+    # knowing they exist is what makes a lookup happen, the way a person knows
+    # they have been burned by something before without holding the detail.
+    lookup = [n for n in ("topics.md", "skillTree.md")
+              if (SEMANTIC_DIR / n).exists()]
+    if lookup:
         sections.append(
-            "## Skill Tree\n"
-            "*Not injected. Read `memory/semantic/skillTree.md` for the index "
-            "and `memory/semantic/skills/<name>.md` for a body, or call "
-            "`search_memory()`, when working in an area one of them covers.*"
+            "## On Demand\n"
+            "*Not injected: "
+            + ", ".join(f"`memory/semantic/{n}`" for n in lookup)
+            + ". `topics.md` holds per-topic do's and don'ts, in more detail "
+            "than the injected files carry. Reach for `search_memory()` for a "
+            "hit map, or an Explore agent over `memory/` when the wording is "
+            "uncertain.*"
         )
 
     digests = cascade_digests(LIMITS["digests"])
