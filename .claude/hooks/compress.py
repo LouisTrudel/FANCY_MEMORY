@@ -529,21 +529,21 @@ def compress_episodic_tier(n: int) -> bool:
     pending.unlink(missing_ok=True)   # validated and written: safe to drop
     log(f"Kept {len(newer)} chars in tier{n}, appended {len(summary)} chars to tier{n+1}")
 
-    # ROBLOX install: semantic extraction runs off the narrative draft only
-    # (see compress_narrative_level); there is no tier1 extraction here.
+    # The semantic update runs off the narrative draft only (see
+    # compress_narrative_level); nothing reads tier1 for it.
 
     return True
 
 
 def trigger_semantic():
-    """Run semantic extraction (preferences + antipatterns from narrative draft)."""
+    """Update the semantic files (preferences + antipatterns) from the draft."""
     try:
         import sys
         sys.path.insert(0, str(Path(__file__).parent))
         from semantic import on_draft_compress
         on_draft_compress()
     except Exception as e:
-        log(f"Semantic extraction failed: {e}")
+        log(f"Semantic update failed: {e}")
 
 
 def compress_narrative_level(level: str) -> bool:
@@ -601,8 +601,8 @@ def compress_narrative_level(level: str) -> bool:
     next_path.write_text(existing + entry, encoding="utf-8")
 
     # semantic.py reads draft.md off disk, so it has to see exactly the half we
-    # just archived: not the half we keep, and not both (that double-extracts).
-    # Expose `older` for the extraction, then restore `newer` in a finally, so a
+    # just archived: not the half we keep, and not both (that would double-count).
+    # Expose `older` for the semantic update, then restore `newer` in a finally, so a
     # failure inside semantic.py cannot strand the half we are retaining.
     if level == "draft":
         try:
